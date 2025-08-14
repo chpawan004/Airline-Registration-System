@@ -1,0 +1,235 @@
+import java.time.LocalDate;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class AirlineApp {
+
+    //  DOMAIN MODELS 
+    static class Flight {
+        final long id;
+        String flightNumber, origin, destination;
+        LocalDate departureDate;
+        int capacity;           // remaining seats
+        final int initialCapacity;
+
+        Flight(long id, String flightNumber, String origin, String destination, LocalDate date, int capacity) {
+            this.id = id;
+            this.flightNumber = flightNumber;
+            this.origin = origin;
+            this.destination = destination;
+            this.departureDate = date;
+            this.capacity = capacity;
+            this.initialCapacity = capacity;
+        }
+
+        @Override public String toString() {
+            return "Flight{id=" + id + ", " + flightNumber + ", " + origin + "->" + destination +
+                   ", date=" + departureDate + ", seats=" + capacity + "/" + initialCapacity + "}";
+        }
+    }
+
+    static class Passenger {
+        final long id;
+        String firstName, lastName, email;
+
+        Passenger(long id, String firstName, String lastName, String email) {
+            this.id = id; this.firstName = firstName; this.lastName = lastName; this.email = email;
+        }
+
+        @Override public String toString() {
+            return "Passenger{id=" + id + ", name=" + firstName + " " + lastName + ", email=" + email + "}";
+        }
+    }
+
+    static class Booking {
+        final long id;
+        final long flightId;
+        final long passengerId;
+        Status status;
+
+        enum Status { CONFIRMED, CANCELLED }
+
+        Booking(long id, long flightId, long passengerId) {
+            this.id = id; this.flightId = flightId; this.passengerId = passengerId; this.status = Status.CONFIRMED;
+        }
+
+        @Override public String toString() {
+            return "Booking{id=" + id + ", flightId=" + flightId + ", passengerId=" + passengerId + ", status=" + status + "}";
+        }
+    }
+
+    // SERVICE 
+    static class AirlineService {
+        private final Map<Long, Flight> flights = new HashMap<>();
+        private final Map<Long, Passenger> passengers = new HashMap<>();
+        private final Map<Long, Booking> bookings = new HashMap<>();
+        private final AtomicLong flightSeq = new AtomicLong(1);
+        private final AtomicLong passengerSeq = new AtomicLong(1);
+        private final AtomicLong bookingSeq = new AtomicLong(1);
+
+        // Flights
+        Flight addFlight(String no, String origin, String dest, LocalDate date, int capacity) {
+            long id = flightSeq.getAndIncrement();
+            Flight f = new Flight(id, no, origin, dest, date, capacity);
+            flights.put(id, f);
+            return f;
+        }
+
+        List<Flight> listFlights() { return new ArrayList<>(flights.values()); }
+
+        List<Flight> searchFlights(String origin, String dest, LocalDate date) {
+            List<Flight> result = new ArrayList<>();
+            for (Flight f : flights.values()) {
+                if (f.origin.equalsIgnoreCase(origin) &&
+                    f.destination.equalsIgnoreCase(dest) &&
+                    f.departureDate.equals(date)) result.add(f);
+            }
+            return result;
+        }
+
+        Optional<Flight> getFlight(long id) { return Optional.ofNullable(flights.get(id)); }
+
+        // Passengers
+        Passenger addPassenger(String fn, String ln, String email) {
+            long id = passengerSeq.getAndIncrement();
+            Passenger p = new Passenger(id, fn, ln, email);
+            passengers.put(id, p);
+            return p;
+        }
+
+        List<Passenger> listPassengers() { return new ArrayList<>(passengers.values()); }
+
+        Optional<Passenger> getPassenger(long id) { return Optional.ofNullable(passengers.get(id)); }
+
+        // Bookings
+        Booking book(long flightId, long passengerId) {
+            Flight f = flights.get(flightId);
+            if (f == null) throw new IllegalArgumentException("Flight not found");
+            if (!passengers.containsKey(passengerId)) throw new IllegalArgumentException("Passenger not found");
+            if (f.capacity <= 0) throw new IllegalStateException("No seats available");
+
+            f.capacity -= 1; // reserve one seat
+            long id = bookingSeq.getAndIncrement();
+            Booking b = new Booking(id, flightId, passengerId);
+            bookings.put(id, b);
+            return b;
+        }
+
+        void cancel(long bookingId) {
+            Booking b = bookings.get(bookingId);
+            if (b == null) throw new IllegalArgumentException("Booking not found");
+            if (b.status == Booking.Status.CANCELLED) return;
+            Flight f = flights.get(b.flightId);
+            if (f != null) f.capacity += 1;
+            b.status = Booking.Status.CANCELLED;
+        }
+
+        List<Booking> listBookings() { return new ArrayList<>(bookings.values()); }
+    }
+
+    // CLI 
+    public static void main(String[] args) {
+        AirlineService svc = new AirlineService();
+        Scanner sc = new Scanner(System.in);
+
+        seedDemoData(svc);
+
+        System.out.println("=== Airline Registration System (Console) ===");
+        while (true) {
+            printMenu();
+            String choice = sc.nextLine().trim();
+
+            try {
+                switch (choice) {
+                    case "1" -> addFlightCLI(svc, sc);
+                    case "2" -> addPassengerCLI(svc, sc);
+                    case "3" -> searchFlightsCLI(svc, sc);
+                    case "4" -> bookCLI(svc, sc);
+                    case "5" -> cancelCLI(svc, sc);
+                    case "6" -> listAllCLI(svc);
+                    case "0" -> {
+                        System.out.println("Goodbye!");
+                        return;
+                    }
+                    default -> System.out.println("Invalid choice.");
+                }
+            } catch (Exception e) {
+                System.out.println("Error: " + e.getMessage());
+            }
+        }
+    }
+
+    private static void printMenu() {
+        System.out.println("""
+                -----------------------------------------
+                1) Add Flight
+                2) Register Passenger
+                3) Search Flights
+                4) Book Seat
+                5) Cancel Booking
+                6) List Flights/Passengers/Bookings
+                0) Exit
+                -----------------------------------------
+                Enter choice: """);
+    }
+
+    private static void addFlightCLI(AirlineService svc, Scanner sc) {
+        System.out.print("Flight Number: "); String no = sc.nextLine().trim();
+        System.out.print("Origin (e.g., DEL): "); String origin = sc.nextLine().trim();
+        System.out.print("Destination (e.g., BOM): "); String dest = sc.nextLine().trim();
+        System.out.print("Departure Date (YYYY-MM-DD): "); LocalDate date = LocalDate.parse(sc.nextLine().trim());
+        System.out.print("Capacity: "); int cap = Integer.parseInt(sc.nextLine().trim());
+        Flight f = svc.addFlight(no, origin, dest, date, cap);
+        System.out.println("Added: " + f);
+    }
+
+    private static void addPassengerCLI(AirlineService svc, Scanner sc) {
+        System.out.print("First Name: "); String fn = sc.nextLine().trim();
+        System.out.print("Last Name: "); String ln = sc.nextLine().trim();
+        System.out.print("Email: "); String email = sc.nextLine().trim();
+        Passenger p = svc.addPassenger(fn, ln, email);
+        System.out.println("Registered: " + p);
+    }
+
+    private static void searchFlightsCLI(AirlineService svc, Scanner sc) {
+        System.out.print("Origin: "); String origin = sc.nextLine().trim();
+        System.out.print("Destination: "); String dest = sc.nextLine().trim();
+        System.out.print("Date (YYYY-MM-DD): "); LocalDate date = LocalDate.parse(sc.nextLine().trim());
+        List<Flight> found = svc.searchFlights(origin, dest, date);
+        if (found.isEmpty()) System.out.println("No matching flights.");
+        else found.forEach(System.out::println);
+    }
+
+    private static void bookCLI(AirlineService svc, Scanner sc) {
+        System.out.print("Flight ID: "); long fid = Long.parseLong(sc.nextLine().trim());
+        System.out.print("Passenger ID: "); long pid = Long.parseLong(sc.nextLine().trim());
+        Booking b = svc.book(fid, pid);
+        System.out.println("Booked: " + b);
+    }
+
+    private static void cancelCLI(AirlineService svc, Scanner sc) {
+        System.out.print("Booking ID: "); long bid = Long.parseLong(sc.nextLine().trim());
+        svc.cancel(bid);
+        System.out.println("Booking cancelled.");
+    }
+
+    private static void listAllCLI(AirlineService svc) {
+        System.out.println("-- Flights --");
+        svc.listFlights().forEach(System.out::println);
+        System.out.println("-- Passengers --");
+        svc.listPassengers().forEach(System.out::println);
+        System.out.println("-- Bookings --");
+        svc.listBookings().forEach(System.out::println);
+    }
+
+    private static void seedDemoData(AirlineService svc) {
+        svc.addFlight("AI101", "DEL", "BOM", LocalDate.now().plusDays(3), 3);
+        svc.addFlight("AI202", "DEL", "BLR", LocalDate.now().plusDays(5), 2);
+        Passenger p1 = svc.addPassenger("Asha", "Verma", "asha@example.com");
+        Passenger p2 = svc.addPassenger("Ravi", "Iyer", "ravi@example.com");
+        // Pre-book one seat for demo
+        svc.book(1L, p1.id);
+        svc.book(1L, p2.id);
+    }
+}
+
